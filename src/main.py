@@ -37,7 +37,13 @@ def run(full_video_path: pathlib.Path, duration: int = 30) -> None:
             clip = clip.resized((1080, 1920))
             clip = clip.with_fps(30)
 
-            clip.write_videofile(current_video, remove_temp=True)
+            clip.write_videofile(
+                current_video,
+                codec="libx264",
+                audio_codec="aac",
+                temp_audiofile="temp-audio.m4a",
+                remove_temp=True,
+            )
 
             print("-----------------###-----------------")
 
