@@ -19,6 +19,9 @@ def run(full_video_path: pathlib.Path, duration: int = 30, offset: int = 0) -> N
         current_duration = int(video.duration)
 
         for start_time in range(0, current_duration, duration):
+            if current_duration < duration:
+                break
+
             clip = video.subclipped(
                 start_time=start_time, end_time=start_time + duration
             )
@@ -50,6 +53,8 @@ def run(full_video_path: pathlib.Path, duration: int = 30, offset: int = 0) -> N
             )
 
             print("-----------------###-----------------")
+
+    print("Finished")
 
 
 if __name__ == "__main__":
