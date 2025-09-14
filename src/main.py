@@ -26,6 +26,10 @@ def run(full_video_path: pathlib.Path, duration: int = 30, offset: int = 0) -> N
             current_duration -= duration
             current_video = output_path / f"{start_time}.mp4"
 
+            if current_video.exists():
+                print(f"{current_video!r} already exists")
+                continue
+
             (w, h) = clip.size
             crop_width = h * 9 / 16
 
