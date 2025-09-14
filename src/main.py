@@ -5,7 +5,7 @@ import typer
 from moviepy.video.fx import Crop
 
 
-def run(full_video_path: pathlib.Path, duration: int = 30) -> None:
+def run(full_video_path: pathlib.Path, duration: int = 30, offset: int = 0) -> None:
     """Splits video into chunks
 
     Example:
@@ -29,7 +29,7 @@ def run(full_video_path: pathlib.Path, duration: int = 30) -> None:
             (w, h) = clip.size
             crop_width = h * 9 / 16
 
-            x1, x2 = (w - crop_width) // 2, (w + crop_width) // 2
+            x1, x2 = (w - crop_width) // 2 + offset, (w + crop_width) // 2 + offset
             y1, y2 = 0, h
             cropper = Crop(x1=x1, y1=y1, x2=x2, y2=y2)
 
