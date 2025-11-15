@@ -2,6 +2,8 @@
 .mypy_cache/
 __pycache__/
 
+dist/
+
 # Secret files
 client_secret.json
 token.json
