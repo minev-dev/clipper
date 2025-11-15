@@ -1,7 +1,7 @@
 import pathlib
 
-from google_auth_oauthlib import flow
 import typer
+from google_auth_oauthlib import flow
 
 from src import utils
 

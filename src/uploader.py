@@ -4,15 +4,13 @@ import os
 import pathlib
 from typing import Generator
 
-from google import genai
-from google.oauth2 import credentials
-from googleapiclient import discovery
-from googleapiclient import http
 import pydantic
 import typer
+from google import genai
+from google.oauth2 import credentials
+from googleapiclient import discovery, http
 
-from src import google_auth
-from src import utils
+from src import google_auth, utils
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)

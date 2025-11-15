@@ -2,9 +2,9 @@ import logging
 import pathlib
 
 import moviepy
-from moviepy.video import fx
 import tqdm
 import typer
+from moviepy.video import fx
 
 logger = logging.getLogger(__name__)
 
