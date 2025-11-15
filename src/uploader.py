@@ -1,21 +1,23 @@
 import datetime
 import os
+import typer
 import pathlib
 from typing import Generator
+import logging
 
-import openai
 import pydantic
-import typer
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from google import genai
+from google.oauth2 import credentials
+from googleapiclient import discovery
+from googleapiclient import http
+from src import google_auth
+from src import utils
 
-app = typer.Typer()
+logger = logging.getLogger(__name__)
 
-
-CLIENT_SECRET_PATH = "client_secret.json"
-CREDENTIALS_PATH = "token.json"
+SHORT_VIDEOS_DIR = utils.DIST_DIR / "video" / "output_mp4"
+VIDEO_TITLE_PATH = utils.DIST_DIR / "video" / "title.txt"
+VIDEO_DESCRIPTION_PATH = utils.DIST_DIR / "video" / "description.txt"
 
 
 class ShortVideo(pydantic.BaseModel):
@@ -29,20 +31,19 @@ class Response(pydantic.BaseModel):
     short_videos: list[ShortVideo]
 
 
-@app.command()
-def upload_videos(
-    videos_dir_path: pathlib.Path, main_video_title: str, main_video_description: str
-) -> None:
-    if "OPENAI_API_KEY" not in os.environ:
-        raise KeyError("Please set 'OPENAI_API_KEY' env variable")
+def run(videos_dir_path: pathlib.Path = SHORT_VIDEOS_DIR) -> None:
+    if "GEMINI_API_KEY" not in os.environ:
+        raise Exception("GEMINI_API_KEY is not set")
 
-    creds = Credentials.from_authorized_user_file(CREDENTIALS_PATH)
+    creds = credentials.Credentials.from_authorized_user_file(
+        filename=google_auth.CREDENTIALS_PATH
+    )
 
-    youtube = build("youtube", "v3", credentials=creds)
+    youtube = discovery.build("youtube", "v3", credentials=creds)
 
     video_data_gen = _get_short_videos_descriptions(
-        main_video_title=main_video_title,
-        main_video_description=main_video_description,
+        main_video_title=_read_file_content(path=VIDEO_TITLE_PATH),
+        main_video_description=_read_file_content(path=VIDEO_DESCRIPTION_PATH),
     )
 
     uploaded_videos_dir_path = videos_dir_path / "uploaded"
@@ -52,7 +53,7 @@ def upload_videos(
         if video_path.suffix != ".mp4":
             continue
 
-        media = MediaFileUpload(video_path, resumable=True)
+        media = http.MediaFileUpload(video_path, resumable=True)
 
         video_data = next(video_data_gen)
 
@@ -72,71 +73,62 @@ def upload_videos(
             },
         }
 
-        request = (
+        response = (
             youtube.videos()
             .insert(part="snippet,status", body=body, media_body=media)
             .execute()
         )
 
-        if request["status"]["uploadStatus"] == "uploaded":
-            print(f"Uploaded {video_data.publish_at} {video_path.stem}")
+        if response["status"]["uploadStatus"] == "uploaded":
+            logger.info(f"Uploaded {video_data.publish_at} {video_path.stem}")
+
             video_path.rename(uploaded_videos_dir_path / video_path.name)
         else:
-            print(request)
-            raise Exception("FAILED")
+            raise Exception(f"Failed to upload: {response}")
 
 
-@app.command()
-def generate_credentials() -> None:
-    flow = InstalledAppFlow.from_client_secrets_file(
-        CLIENT_SECRET_PATH,
-        scopes=[
-            "https://www.googleapis.com/auth/youtube",
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtubepartner",
-            "https://www.googleapis.com/auth/youtube.force-ssl",
-        ],
-    )
-    creds = flow.run_local_server(port=0)
-    # Save the credentials for the next run
-    with open(CREDENTIALS_PATH, "w") as token:
-        token.write(creds.to_json())
+def _read_file_content(path: pathlib.Path) -> str:
+    with open(path, "r") as file:
+        return file.read()
 
 
 def _get_short_videos_descriptions(
     main_video_title: str, main_video_description: str, num: int = 9
 ) -> Generator[ShortVideo, None, None]:
-    client = openai.OpenAI()
-
     # last_uploaded_video_dt = datetime.datetime(
-    #     2025, 2, 9, 23, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=-8))
+    #     2025, 10, 19, 22, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=-8))
     # )
     last_uploaded_video_dt = datetime.datetime.now()
     publish_schedule = "3 times a day (at 10am, 6pm, 10pm)"
 
+    prompt = f"""
+        Prepare {num} YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone).
+        Tags should be viral.
+        Video should be published {publish_schedule}, last video was published at {last_uploaded_video_dt}.
+        Don't use emoji in texts
+
+        Main video title: {main_video_title}
+        Main video description: {main_video_description}
+    """
+    client = genai.Client()
+
     while True:
-        completion = client.beta.chat.completions.parse(
-            model="gpt-4o-2024-11-20",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"Prepare {num} YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone). Tags should be viral. Video should be published {publish_schedule}, last video was published at {last_uploaded_video_dt}. Don't use emoji in texts",
-                },
-                {
-                    "role": "user",
-                    "content": f"Main video title: {main_video_title}\nMain video description: {main_video_description}",
-                },
-            ],
-            response_format=Response,
+        raw_response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_json_schema": Response.model_json_schema(),
+            },
         )
-        short_videos = completion.choices[0].message.parsed.short_videos
+        response = Response.model_validate_json(raw_response.text)
 
-        assert len(short_videos) == num
+        assert len(response.short_videos) == num
 
-        yield from short_videos
+        yield from response.short_videos
 
         last_uploaded_video_dt += datetime.timedelta(days=3)
 
 
 if __name__ == "__main__":
-    app()
+    typer.run(run)
