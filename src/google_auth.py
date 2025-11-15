@@ -2,12 +2,11 @@ import typer
 import pathlib
 
 from google_auth_oauthlib import flow
+from src import utils
 
 
-_SECRETS_DIR = pathlib.Path(__file__).parent.parent / "secrets"
-
-CLIENT_SECRET_PATH = _SECRETS_DIR / "client_secret.json"
-CREDENTIALS_PATH = _SECRETS_DIR / "token.json"
+CLIENT_SECRET_PATH = utils.SECRETS_DIR / "client_secret.json"
+CREDENTIALS_PATH = utils.SECRETS_DIR / "token.json"
 
 YOTUBE_SCOPES = (
     "https://www.googleapis.com/auth/youtube",
