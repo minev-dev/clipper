@@ -1,8 +1,11 @@
 import pathlib
+import logging
 
 import moviepy
 import typer
 from moviepy.video.fx import Crop
+
+logger = logging.getLogger(__name__)
 
 
 def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> None:
@@ -31,7 +34,7 @@ def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> N
             current_video = output_path / f"{start_time}.mp4"
 
             if current_video.exists():
-                print(f"{current_video!r} already exists")
+                logger.info(f"{current_video!r} already exists")
                 continue
 
             (w, h) = clip.size
@@ -53,9 +56,9 @@ def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> N
                 remove_temp=True,
             )
 
-            print("-----------------###-----------------")
+            logger.info("-----------------###-----------------")
 
-    print("Finished")
+    logger.info("Finished")
 
 
 if __name__ == "__main__":
