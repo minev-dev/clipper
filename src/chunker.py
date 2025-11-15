@@ -6,12 +6,7 @@ from moviepy.video.fx import Crop
 
 
 def run(full_video_path: pathlib.Path, duration: int = 30, offset: int = 0) -> None:
-    """Splits video into chunks
-
-    Example:
-
-        python src/main.py /path/to/file.mov
-    """
+    """Splits video into chunks"""
     output_path = full_video_path.parent / "output_mp4"
     output_path.mkdir(exist_ok=True)
 
