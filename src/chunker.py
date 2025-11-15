@@ -1,9 +1,10 @@
-import pathlib
 import logging
+import pathlib
 
 import moviepy
-import typer
 from moviepy.video import fx
+import tqdm
+import typer
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> N
     with moviepy.VideoFileClip(full_video_path) as video:
         current_duration = int(video.duration)
 
-        for start_time in range(0, current_duration, duration):
+        for start_time in tqdm.tqdm(range(0, current_duration, duration)):
             if current_duration < duration:
                 break
 

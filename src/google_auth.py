@@ -1,9 +1,9 @@
-import typer
 import pathlib
 
 from google_auth_oauthlib import flow
-from src import utils
+import typer
 
+from src import utils
 
 CLIENT_SECRET_PATH = utils.SECRETS_DIR / "client_secret.json"
 CREDENTIALS_PATH = utils.SECRETS_DIR / "token.json"
