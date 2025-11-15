@@ -3,7 +3,7 @@ import logging
 
 import moviepy
 import typer
-from moviepy.video.fx import Crop
+from moviepy.video import fx
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> N
 
             x1, x2 = (w - crop_width) // 2 + offset, (w + crop_width) // 2 + offset
             y1, y2 = 0, h
-            cropper = Crop(x1=x1, y1=y1, x2=x2, y2=y2)
+            cropper = fx.Crop(x1=x1, y1=y1, x2=x2, y2=y2)
 
             clip = cropper.apply(clip=clip)
             clip = clip.resized((1080, 1920))
