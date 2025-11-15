@@ -3,7 +3,4 @@
 __pycache__/
 
 dist/
-
-# Secret files
-client_secret.json
-token.json
+secrets/
