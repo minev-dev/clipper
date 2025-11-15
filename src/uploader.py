@@ -15,6 +15,7 @@ from src import google_auth
 from src import utils
 
 logger = logging.getLogger(__name__)
+logger.setLevel(level=logging.INFO)
 
 SHORT_VIDEOS_DIR = utils.DIST_DIR / "video" / "output_mp4"
 VIDEO_TITLE_PATH = utils.DIST_DIR / "video" / "title.txt"
@@ -81,7 +82,7 @@ def run(videos_dir_path: pathlib.Path = SHORT_VIDEOS_DIR) -> None:
         )
 
         if response["status"]["uploadStatus"] == "uploaded":
-            logger.info(f"Uploaded {video_data.publish_at} {video_path.stem}")
+            logger.info(f"Uploaded {video_path.stem} {video_data}")
 
             video_path.rename(uploaded_videos_dir_path / video_path.name)
         else:
@@ -102,18 +103,19 @@ def _get_short_videos_descriptions(
     last_uploaded_video_dt = datetime.datetime.now()
     publish_schedule = "3 times a day (at 10am, 6pm, 10pm)"
 
-    prompt = f"""
-        Prepare {num} YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone).
-        Tags should be viral.
-        Video should be published {publish_schedule}, last video was published at {last_uploaded_video_dt}.
-        Don't use emoji in texts
-
-        Main video title: {main_video_title}
-        Main video description: {main_video_description}
-    """
     client = genai.Client()
 
     while True:
+        prompt = f"""
+            Prepare {num} YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone).
+            Tags should be viral.
+            Video should be published {publish_schedule}, last video was published at {last_uploaded_video_dt}.
+            Don't use emoji in texts
+
+            Main video title: {main_video_title}
+            Main video description: {main_video_description}
+        """
+
         raw_response = client.models.generate_content(
             model="gemini-2.5-pro",
             contents=prompt,
