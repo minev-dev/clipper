@@ -15,7 +15,9 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = []
+dev = [
+    "pytest>=9.0.2",
+]
 
 [tool.uv]
 package = false
