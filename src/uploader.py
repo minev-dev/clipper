@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import pathlib
+import string
 from typing import Generator
 
 import pydantic
@@ -18,6 +19,20 @@ logger.setLevel(level=logging.INFO)
 SHORT_VIDEOS_DIR = utils.DIST_DIR / "video" / "output_mp4"
 VIDEO_TITLE_PATH = utils.DIST_DIR / "video" / "title.txt"
 VIDEO_DESCRIPTION_PATH = utils.DIST_DIR / "video" / "description.txt"
+
+PUBLISH_SCHEDULE = "3 times a day (at 10am, 6pm, 10pm)"
+
+MODEL_NAME = "gemini-3-flash-preview"
+
+PROMPT_TEMPLATE = string.Template("""
+Prepare $num YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone).
+Tags should be viral.
+Video should be published $publish_schedule, last video was published at $last_uploaded_video_dt.
+Don't use emoji in texts
+
+Main video title: $main_video_title
+Main video description: $main_video_description
+""")
 
 
 class ShortVideo(pydantic.BaseModel):
@@ -106,29 +121,28 @@ def _get_short_videos_descriptions(
 ) -> Generator[ShortVideo, None, None]:
     last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt_str)
 
-    publish_schedule = "3 times a day (at 10am, 6pm, 10pm)"
-
     client = genai.Client()
 
     while True:
-        prompt = f"""
-            Prepare {num} YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone).
-            Tags should be viral.
-            Video should be published {publish_schedule}, last video was published at {last_uploaded_video_dt}.
-            Don't use emoji in texts
-
-            Main video title: {main_video_title}
-            Main video description: {main_video_description}
-        """
+        prompt = PROMPT_TEMPLATE.substitute(
+            num=num,
+            publish_schedule=PUBLISH_SCHEDULE,
+            last_uploaded_video_dt=last_uploaded_video_dt,
+            main_video_title=main_video_title,
+            main_video_description=main_video_description,
+        )
 
         raw_response = client.models.generate_content(
-            model="gemini-2.5-pro",
+            model=MODEL_NAME,
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
                 "response_json_schema": Response.model_json_schema(),
             },
         )
+        if raw_response.text is None:
+            raise ValueError("Gemini API returned an empty response")
+
         response = Response.model_validate_json(raw_response.text)
 
         assert len(response.short_videos) == num
