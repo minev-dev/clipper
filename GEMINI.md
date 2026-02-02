@@ -27,7 +27,7 @@ _(This section will be updated with project-specific details as they are discove
 - **Tests:** Test files are located next to the file being tested, with a `_test.py` suffix (e.g., `src/utils_test.py`).
 - **Dependency Management:** `pyproject.toml` (using `uv`).
 - **Linting & Formatting:** `ruff` is used for linting.
-- **Type Checking:** `pyright` is used for type checking.
+- **Type Checking:** `ty` is used for type checking.
 - **Test Runner:** `pytest` is used for running tests.
 - **Environment Variables:** `GEMINI_API_KEY` is required for some functionality (e.g., `src/uploader.py`).
 - **Credentials:** Google OAuth credentials are expected at `src/google_auth.CREDENTIALS_PATH`.
@@ -35,5 +35,5 @@ _(This section will be updated with project-specific details as they are discove
 ## Notes
 
 - Always check `pyproject.toml` for the latest dependencies and tool configurations.
-- Verify changes with `ruff check .` and `pyright .` before considering a task complete.
+- Verify changes with `ruff check .` and `ty check .` before considering a task complete.
 - Run tests using `PYTHONPATH=. uv run pytest` (or appropriate command if environment changes).
