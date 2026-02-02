@@ -1,9 +1,11 @@
 import logging
 import pathlib
+from typing import cast
 
 import moviepy
 import tqdm
 import typer
+from moviepy import VideoClip
 from moviepy.video import fx
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> N
             y1, y2 = 0, h
             cropper = fx.Crop(x1=x1, y1=y1, x2=x2, y2=y2)
 
-            clip = cropper.apply(clip=clip)
+            clip = cast(VideoClip, cropper.apply(clip=clip))
             clip = clip.resized((1080, 1920))
             clip = clip.with_fps(30)
 
