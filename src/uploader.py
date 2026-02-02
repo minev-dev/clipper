@@ -1,5 +1,4 @@
 import datetime
-import logging
 import os
 import pathlib
 import string
@@ -13,8 +12,7 @@ from googleapiclient import discovery, http
 
 from src import google_auth, utils
 
-logger = logging.getLogger(__name__)
-logger.setLevel(level=logging.INFO)
+logger = utils.get_logger(__name__)
 
 SHORT_VIDEOS_DIR = utils.DIST_DIR / "video" / "output_mp4"
 VIDEO_TITLE_PATH = utils.DIST_DIR / "video" / "title.txt"

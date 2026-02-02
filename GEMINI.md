@@ -17,6 +17,33 @@ Key points to remember:
 - **Docstrings:** Use Google-style docstrings.
 - **Typing:** Use type hints for function arguments and return values.
 - **Ordering:** Sort functions by usage (top to bottom), so the code reads like a story (entry point first, then helpers).
+  - **Detailed Instructions:**
+    - Place the main entry point (e.g., `main()` or `run()`) at the top of the file.
+    - Define helper functions in the order they are first called within the main function.
+    - If a helper function calls other helpers, define those nested helpers immediately after the caller.
+    - This structure allows a reader to follow the execution flow linearly without jumping around the file.
+  - **Example:**
+    ```python
+    def main():
+        setup()
+        process()
+
+    def setup():
+        # Setup logic
+        ...
+
+    def process():
+        data = load_data()
+        clean_data(data)
+
+    def load_data():
+        # Load logic
+        ...
+
+    def clean_data(data):
+        # Clean logic
+        ...
+    ```
 
 ## Project Specifics
 
