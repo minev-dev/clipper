@@ -9,25 +9,6 @@ from moviepy.video import fx
 logger = logging.getLogger(__name__)
 
 
-def _get_start_time(output_path: pathlib.Path, duration: int) -> int:
-    start_from_s = 0
-    existing_files = list(output_path.glob("*.mp4"))
-    if existing_files:
-        existing_starts = []
-        for f in existing_files:
-            try:
-                val = int(f.stem)
-                existing_starts.append(val)
-            except ValueError:
-                pass
-
-        if existing_starts:
-            last_start = max(existing_starts)
-            start_from_s = last_start + duration
-            logger.info(f"Resuming from {start_from_s}s detected from existing output.")
-    return start_from_s
-
-
 def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> None:
     """Splits video into chunks
 
@@ -84,6 +65,25 @@ def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> N
             logger.info("-----------------###-----------------")
 
     logger.info("Finished")
+
+
+def _get_start_time(output_path: pathlib.Path, duration: int) -> int:
+    start_from_s = 0
+    existing_files = list(output_path.glob("*.mp4"))
+    if existing_files:
+        existing_starts = []
+        for f in existing_files:
+            try:
+                val = int(f.stem)
+                existing_starts.append(val)
+            except ValueError:
+                pass
+
+        if existing_starts:
+            last_start = max(existing_starts)
+            start_from_s = last_start + duration
+            logger.info(f"Resuming from {start_from_s}s detected from existing output.")
+    return start_from_s
 
 
 if __name__ == "__main__":

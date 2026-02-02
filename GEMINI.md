@@ -16,6 +16,7 @@ Key points to remember:
   - `GLOBAL_CONSTANT_NAME`
 - **Docstrings:** Use Google-style docstrings.
 - **Typing:** Use type hints for function arguments and return values.
+- **Ordering:** Sort functions by usage (top to bottom), so the code reads like a story (entry point first, then helpers).
 
 ## Project Specifics
 

@@ -98,11 +98,6 @@ def run(
             raise Exception(f"Failed to upload: {response}")
 
 
-def _read_file_content(path: pathlib.Path) -> str:
-    with open(path, "r") as file:
-        return file.read()
-
-
 def _get_short_videos_descriptions(
     main_video_title: str,
     main_video_description: str,
@@ -141,6 +136,11 @@ def _get_short_videos_descriptions(
         yield from response.short_videos
 
         last_uploaded_video_dt += datetime.timedelta(days=3)
+
+
+def _read_file_content(path: pathlib.Path) -> str:
+    with open(path, "r") as file:
+        return file.read()
 
 
 if __name__ == "__main__":
