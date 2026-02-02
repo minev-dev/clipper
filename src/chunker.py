@@ -9,22 +9,38 @@ from moviepy.video import fx
 logger = logging.getLogger(__name__)
 
 
-def run(
-    full_video_path: pathlib.Path,
-    duration: int = 20,
-    offset: int = 0,
-    start_from_s: int = 0,
-) -> None:
+def _get_start_time(output_path: pathlib.Path, duration: int) -> int:
+    start_from_s = 0
+    existing_files = list(output_path.glob("*.mp4"))
+    if existing_files:
+        existing_starts = []
+        for f in existing_files:
+            try:
+                val = int(f.stem)
+                existing_starts.append(val)
+            except ValueError:
+                pass
+
+        if existing_starts:
+            last_start = max(existing_starts)
+            start_from_s = last_start + duration
+            logger.info(f"Resuming from {start_from_s}s detected from existing output.")
+    return start_from_s
+
+
+def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> None:
     """Splits video into chunks
 
     Args:
         full_video_path: Path to full video to split
         duration: Duration of each chunk
         offset: Offset on `x` axis from the center
-        start_from_s: Initial second to start cutting from
     """
     output_path = full_video_path.parent / "output_mp4"
     output_path.mkdir(exist_ok=True)
+
+    start_from_s = _get_start_time(output_path, duration)
+    logger.info(f"Starting from {start_from_s}s")
 
     with moviepy.VideoFileClip(full_video_path) as video:
         video_duration = int(video.duration)
