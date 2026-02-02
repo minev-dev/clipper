@@ -31,7 +31,17 @@ class Response(pydantic.BaseModel):
     short_videos: list[ShortVideo]
 
 
-def run(videos_dir_path: pathlib.Path = SHORT_VIDEOS_DIR) -> None:
+def run(
+    videos_dir_path: pathlib.Path = SHORT_VIDEOS_DIR,
+    last_uploaded_video_dt: str = "now",
+) -> None:
+    """Uploads short videos from a directory to YouTube.
+
+    Args:
+        videos_dir_path: Path to the directory containing .mp4 videos to upload.
+        last_uploaded_video_dt: The date and time of the last uploaded video.
+            Can be "now" or an ISO formatted date string.
+    """
     if "GEMINI_API_KEY" not in os.environ:
         raise Exception("GEMINI_API_KEY is not set")
 
@@ -44,6 +54,7 @@ def run(videos_dir_path: pathlib.Path = SHORT_VIDEOS_DIR) -> None:
     video_data_gen = _get_short_videos_descriptions(
         main_video_title=_read_file_content(path=VIDEO_TITLE_PATH),
         main_video_description=_read_file_content(path=VIDEO_DESCRIPTION_PATH),
+        last_uploaded_video_dt_str=last_uploaded_video_dt,
     )
 
     uploaded_videos_dir_path = videos_dir_path / "uploaded"
@@ -93,12 +104,13 @@ def _read_file_content(path: pathlib.Path) -> str:
 
 
 def _get_short_videos_descriptions(
-    main_video_title: str, main_video_description: str, num: int = 9
+    main_video_title: str,
+    main_video_description: str,
+    last_uploaded_video_dt_str: str,
+    num: int = 9,
 ) -> Generator[ShortVideo, None, None]:
-    # last_uploaded_video_dt = datetime.datetime(
-    #     2025, 10, 19, 22, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=-8))
-    # )
-    last_uploaded_video_dt = datetime.datetime.now()
+    last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt_str)
+
     publish_schedule = "3 times a day (at 10am, 6pm, 10pm)"
 
     client = genai.Client()
