@@ -9,21 +9,28 @@ from moviepy.video import fx
 logger = logging.getLogger(__name__)
 
 
-def run(full_video_path: pathlib.Path, duration: int = 20, offset: int = 0) -> None:
+def run(
+    full_video_path: pathlib.Path,
+    duration: int = 20,
+    offset: int = 0,
+    start_from_s: int = 0,
+) -> None:
     """Splits video into chunks
 
     Args:
         full_video_path: Path to full video to split
         duration: Duration of each chunk
         offset: Offset on `x` axis from the center
+        start_from_s: Initial second to start cutting from
     """
     output_path = full_video_path.parent / "output_mp4"
     output_path.mkdir(exist_ok=True)
 
     with moviepy.VideoFileClip(full_video_path) as video:
-        current_duration = int(video.duration)
+        video_duration = int(video.duration)
+        current_duration = video_duration - start_from_s
 
-        for start_time in tqdm.tqdm(range(0, current_duration, duration)):
+        for start_time in tqdm.tqdm(range(start_from_s, video_duration, duration)):
             if current_duration < duration:
                 break
 
