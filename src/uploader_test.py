@@ -42,22 +42,38 @@ class _FakeYouTube:
         return self.videos_resource
 
 
-def _make_short_video(
+def _make_manifest_item(
+    video_path: pathlib.Path,
     title: str,
     description: str,
     tags: list[str],
     publish_at: str,
 ) -> dict[str, object]:
     return {
-        "title": title,
-        "description": description,
-        "tags": tags,
-        "publish_at": publish_at,
+        "video_path": str(video_path),
+        "body": {
+            "snippet": {
+                "title": title,
+                "description": description,
+                "tags": tags,
+                "categoryId": "10",
+                "defaultLanguage": "en",
+            },
+            "status": {
+                "privacyStatus": "private",
+                "publishAt": publish_at,
+                "containsSyntheticMedia": False,
+                "selfDeclaredMadeForKids": False,
+            },
+        },
     }
 
 
-def _make_short_videos_response(short_videos: list[dict[str, object]]) -> str:
-    return json.dumps({"short_videos": short_videos})
+def _write_manifest(path: pathlib.Path, manifest_items: list[dict[str, object]]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(manifest_item) for manifest_item in manifest_items) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_prepare_creates_jsonl_manifest(monkeypatch, tmp_path):
@@ -74,73 +90,34 @@ def test_prepare_creates_jsonl_manifest(monkeypatch, tmp_path):
 
     monkeypatch.setattr(uploader, "VIDEO_TITLE_PATH", title_path)
     monkeypatch.setattr(uploader, "VIDEO_DESCRIPTION_PATH", description_path)
-    monkeypatch.setattr(
-        uploader.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout=_make_short_videos_response(
-                [
-                    _make_short_video(
-                        title="Alpha title",
-                        description="Alpha description",
-                        tags=["alpha", "viral"],
-                        publish_at="2026-01-01T10:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Bravo title",
-                        description="Bravo description",
-                        tags=["bravo", "viral"],
-                        publish_at="2026-01-01T18:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-01T22:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-02T10:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-02T18:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-02T22:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-03T10:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-03T18:00:00-08:00",
-                    ),
-                    _make_short_video(
-                        title="Spare",
-                        description="Spare",
-                        tags=["spare"],
-                        publish_at="2026-01-03T22:00:00-08:00",
-                    ),
-                ]
-            ),
-            stderr="",
-        ),
-    )
+
+    def fake_run(*args, **kwargs):
+        assert kwargs["cwd"] == videos_dir
+        assert args[0][0] == "gemini"
+        assert "--approval-mode" in args[0]
+        assert "auto_edit" in args[0]
+        _write_manifest(
+            videos_dir / uploader.UPLOAD_MANIFEST_PATH,
+            [
+                _make_manifest_item(
+                    video_path=videos_dir / "a.mp4",
+                    title="Alpha title",
+                    description="Alpha description",
+                    tags=["alpha", "viral"],
+                    publish_at="2026-01-01T10:00:00-08:00",
+                ),
+                _make_manifest_item(
+                    video_path=videos_dir / "b.mp4",
+                    title="Bravo title",
+                    description="Bravo description",
+                    tags=["bravo", "viral"],
+                    publish_at="2026-01-01T18:00:00-08:00",
+                ),
+            ],
+        )
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(uploader.subprocess, "run", fake_run)
 
     uploader.prepare(
         videos_dir_path=videos_dir,
@@ -201,45 +178,43 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
     description_path.write_text("Main description", encoding="utf-8")
 
     prompts: list[str] = []
-    response = _make_short_videos_response(
-        [
-            _make_short_video(
-                title=f"Title {index}",
-                description=f"Description {index}",
-                tags=[f"tag-{index}"],
-                publish_at=publish_at,
-            )
-            for index, publish_at in enumerate(
-                [
-                    "2026-01-01T10:00:00-08:00",
-                    "2026-01-01T18:00:00-08:00",
-                    "2026-01-01T22:00:00-08:00",
-                    "2026-01-02T10:00:00-08:00",
-                    "2026-01-02T18:00:00-08:00",
-                    "2026-01-02T22:00:00-08:00",
-                    "2026-01-03T10:00:00-08:00",
-                    "2026-01-03T18:00:00-08:00",
-                    "2026-01-03T22:00:00-08:00",
-                    "2026-01-04T10:00:00-08:00",
-                    "2026-01-04T18:00:00-08:00",
-                ],
-                start=1,
-            )
-        ]
-    )
-
     monkeypatch.setattr(uploader, "VIDEO_TITLE_PATH", title_path)
     monkeypatch.setattr(uploader, "VIDEO_DESCRIPTION_PATH", description_path)
 
-    def fake_generate_content(prompt: str) -> str:
-        prompts.append(prompt)
-        return response
+    def fake_run(*args, **kwargs):
+        assert kwargs["cwd"] == videos_dir
+        prompts.append(args[0][-1])
+        _write_manifest(
+            videos_dir / uploader.UPLOAD_MANIFEST_PATH,
+            [
+                _make_manifest_item(
+                    video_path=videos_dir / f"{index - 1:02}.mp4",
+                    title=f"Title {index}",
+                    description=f"Description {index}",
+                    tags=[f"tag-{index}"],
+                    publish_at=publish_at,
+                )
+                for index, publish_at in enumerate(
+                    [
+                        "2026-01-01T10:00:00-08:00",
+                        "2026-01-01T18:00:00-08:00",
+                        "2026-01-01T22:00:00-08:00",
+                        "2026-01-02T10:00:00-08:00",
+                        "2026-01-02T18:00:00-08:00",
+                        "2026-01-02T22:00:00-08:00",
+                        "2026-01-03T10:00:00-08:00",
+                        "2026-01-03T18:00:00-08:00",
+                        "2026-01-03T22:00:00-08:00",
+                        "2026-01-04T10:00:00-08:00",
+                        "2026-01-04T18:00:00-08:00",
+                    ],
+                    start=1,
+                )
+            ],
+        )
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(
-        uploader,
-        "_generate_content_with_local_agent",
-        fake_generate_content,
-    )
+    monkeypatch.setattr(uploader.subprocess, "run", fake_run)
 
     uploader.prepare(
         videos_dir_path=videos_dir,
@@ -266,8 +241,10 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
         },
     }
     assert len(prompts) == 1
-    assert "Prepare 11 YouTube short video descriptions" in prompts[0]
-    assert "last video was published at 2026-01-01 09:00:00-08:00" in prompts[0]
+    assert "Create the file upload_manifest.jsonl" in prompts[0]
+    assert "Write exactly 11 JSON lines" in prompts[0]
+    assert "Last video was published at 2026-01-01 09:00:00-08:00" in prompts[0]
+    assert str(videos_dir / "10.mp4") in prompts[0]
 
 
 def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):
@@ -293,7 +270,10 @@ def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):
         ),
     ]
     manifest_path = videos_dir / uploader.UPLOAD_MANIFEST_PATH
-    uploader._write_manifest(manifest_path=manifest_path, manifest_items=manifest_items)
+    _write_manifest(
+        manifest_path,
+        [manifest_item.model_dump(mode="json") for manifest_item in manifest_items],
+    )
 
     fake_youtube = _FakeYouTube()
     monkeypatch.setattr(
@@ -328,12 +308,35 @@ def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):
     assert upload_calls[0]["media_body"] == videos_dir / "a.mp4"
 
 
-def test_extract_model_text_from_gemini_output_accepts_nested_json():
-    text = uploader._extract_model_text_from_gemini_output(
-        '{"response":{"content":"{\\"short_videos\\":[]}"}}'
+def test_prepare_raises_when_agent_does_not_create_manifest(monkeypatch, tmp_path):
+    videos_dir = tmp_path / "videos"
+    videos_dir.mkdir()
+    (videos_dir / "a.mp4").write_text("video-a", encoding="utf-8")
+
+    title_path = tmp_path / "title.txt"
+    description_path = tmp_path / "description.txt"
+    title_path.write_text("Main title", encoding="utf-8")
+    description_path.write_text("Main description", encoding="utf-8")
+
+    monkeypatch.setattr(uploader, "VIDEO_TITLE_PATH", title_path)
+    monkeypatch.setattr(uploader, "VIDEO_DESCRIPTION_PATH", description_path)
+    monkeypatch.setattr(
+        uploader.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="done",
+            stderr="",
+        ),
     )
 
-    assert text == '{"short_videos":[]}'
+    try:
+        uploader.prepare(videos_dir_path=videos_dir)
+    except RuntimeError as error:
+        assert "did not create the manifest file" in str(error)
+    else:
+        raise AssertionError("Expected prepare() to fail when the manifest is missing")
 
 
 def test_read_manifest_skips_empty_lines(tmp_path):

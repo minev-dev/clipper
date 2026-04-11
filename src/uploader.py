@@ -1,10 +1,9 @@
 import datetime
-import json
 import os
 import pathlib
 import string
 import subprocess
-from typing import Generator, cast
+from typing import Iterable
 
 import pydantic
 import typer
@@ -23,33 +22,53 @@ UPLOAD_MANIFEST_PATH = "upload_manifest.jsonl"
 PUBLISH_SCHEDULE = "3 times a day (at 10am, 6pm, 10pm)"
 MODEL_NAME = "gemini-3.1-pro-preview"
 
-PROMPT_TEMPLATE = string.Template(
+MANIFEST_PROMPT_TEMPLATE = string.Template(
     """
-Prepare $num YouTube short video descriptions for the provided main video title, description, tags and publish date (ISO format, PST timezone).
-Tags should be viral.
-Video should be published $publish_schedule, last video was published at $last_uploaded_video_dt.
-Don't use emoji in texts
+Create the file upload_manifest.jsonl in the current working directory.
+
+Write exactly $num JSON lines, one per provided video path, using each path exactly once and preserving the provided order.
+
+Each line must use this schema:
+{"video_path":"<provided video path>","body":{"snippet":{"title":"...","description":"...","tags":["..."],"categoryId":"10","defaultLanguage":"en"},"status":{"privacyStatus":"private","publishAt":"<ISO datetime in PST/PDT>","containsSyntheticMedia":false,"selfDeclaredMadeForKids":false}}}
+
+Requirements:
+- Tags should be viral.
+- Video should be published $publish_schedule.
+- Last video was published at $last_uploaded_video_dt.
+- Don't use emoji in texts.
+- Do not modify any file other than upload_manifest.jsonl.
 
 Main video title: $main_video_title
 Main video description: $main_video_description
+Video paths:
+$video_paths
 """
 )
-
-
-class ShortVideo(pydantic.BaseModel):
-    title: str
-    description: str
-    tags: list[str]
-    publish_at: str
-
-
-class Response(pydantic.BaseModel):
-    short_videos: list[ShortVideo]
 
 
 class ManifestItem(pydantic.BaseModel):
     video_path: str
     body: dict[str, object]
+
+
+class ManifestSnippet(pydantic.BaseModel):
+    title: str
+    description: str
+    tags: list[str]
+    categoryId: str
+    defaultLanguage: str
+
+
+class ManifestStatus(pydantic.BaseModel):
+    privacyStatus: str
+    publishAt: str
+    containsSyntheticMedia: bool
+    selfDeclaredMadeForKids: bool
+
+
+class ManifestBody(pydantic.BaseModel):
+    snippet: ManifestSnippet
+    status: ManifestStatus
 
 
 app = typer.Typer()
@@ -74,14 +93,18 @@ def prepare(
         logger.info(f"No .mp4 files found in {videos_dir_path}")
         return
 
-    manifest_items = _build_manifest(
+    resolved_last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt)
+    manifest_path = videos_dir_path / UPLOAD_MANIFEST_PATH
+    _create_manifest_with_local_agent(
+        videos_dir_path=videos_dir_path,
+        manifest_path=manifest_path,
         main_video_title=_read_file_content(path=VIDEO_TITLE_PATH),
         main_video_description=_read_file_content(path=VIDEO_DESCRIPTION_PATH),
-        last_uploaded_video_dt_str=last_uploaded_video_dt,
+        last_uploaded_video_dt=resolved_last_uploaded_video_dt,
         video_paths=video_paths,
     )
-    manifest_path = videos_dir_path / UPLOAD_MANIFEST_PATH
-    _write_manifest(manifest_path=manifest_path, manifest_items=manifest_items)
+    manifest_items = _read_manifest(manifest_path=manifest_path)
+    _validate_manifest(manifest_items=manifest_items, video_paths=video_paths)
     logger.info(f"Created manifest: {manifest_path}")
 
 
@@ -131,58 +154,47 @@ def upload(
             raise Exception(f"Failed to upload: {response}")
 
 
-def _build_manifest(
+def _create_manifest_with_local_agent(
+    videos_dir_path: pathlib.Path,
+    manifest_path: pathlib.Path,
     main_video_title: str,
     main_video_description: str,
-    last_uploaded_video_dt_str: str,
+    last_uploaded_video_dt: datetime.datetime,
     video_paths: list[pathlib.Path],
-) -> list[ManifestItem]:
-    video_count = len(video_paths)
-    manifest_items: list[ManifestItem] = []
-    video_data_gen = _get_short_videos_descriptions(
+) -> None:
+    prompt = _build_manifest_prompt(
         main_video_title=main_video_title,
         main_video_description=main_video_description,
-        last_uploaded_video_dt_str=last_uploaded_video_dt_str,
-        num=video_count,
+        last_uploaded_video_dt=last_uploaded_video_dt,
+        video_paths=video_paths,
+    )
+    if manifest_path.exists():
+        manifest_path.unlink()
+
+    result = subprocess.run(
+        [
+            "gemini",
+            "--model",
+            MODEL_NAME,
+            "--approval-mode",
+            "auto_edit",
+            "-p",
+            prompt,
+        ],
+        capture_output=True,
+        check=True,
+        cwd=videos_dir_path,
+        env=os.environ.copy(),
+        text=True,
     )
 
-    for video_path in video_paths:
-        short_video = next(video_data_gen)
-        manifest_items.append(
-            ManifestItem(
-                video_path=str(video_path),
-                body=_create_video_body(short_video),
-            )
-        )
-    return manifest_items
+    if manifest_path.exists():
+        return
 
-
-def _create_video_body(video_data: ShortVideo) -> dict[str, object]:
-    return {
-        "snippet": {
-            "title": video_data.title,
-            "description": video_data.description,
-            "tags": video_data.tags,
-            "categoryId": "10",  # Music (https://gist.github.com/dgp/1b24bf2961521bd75d6c)
-            "defaultLanguage": "en",
-        },
-        "status": {
-            "privacyStatus": "private",
-            "publishAt": video_data.publish_at,
-            "containsSyntheticMedia": False,
-            "selfDeclaredMadeForKids": False,
-        },
-    }
-
-
-def _write_manifest(
-    manifest_path: pathlib.Path,
-    manifest_items: list[ManifestItem],
-) -> None:
-    with open(manifest_path, "w", encoding="utf-8") as file:
-        for manifest_item in manifest_items:
-            file.write(manifest_item.model_dump_json())
-            file.write("\n")
+    raise RuntimeError(
+        "Gemini local agent did not create the manifest file. "
+        f"stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}"
+    )
 
 
 def _read_manifest(manifest_path: pathlib.Path) -> list[ManifestItem]:
@@ -197,134 +209,44 @@ def _read_manifest(manifest_path: pathlib.Path) -> list[ManifestItem]:
         ]
 
 
-def _get_short_videos_descriptions(
-    main_video_title: str,
-    main_video_description: str,
-    last_uploaded_video_dt_str: str,
-    num: int,
-) -> Generator[ShortVideo, None, None]:
-    last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt_str)
-    if num <= 0:
-        return
+def _validate_manifest(
+    manifest_items: list[ManifestItem],
+    video_paths: list[pathlib.Path],
+) -> None:
+    expected_video_paths = [str(video_path) for video_path in video_paths]
+    actual_video_paths = [manifest_item.video_path for manifest_item in manifest_items]
 
-    yield from _generate_short_videos(
-        main_video_title=main_video_title,
-        main_video_description=main_video_description,
-        last_uploaded_video_dt=last_uploaded_video_dt,
-        num=num,
-    )
+    if len(manifest_items) != len(video_paths):
+        raise ValueError(
+            "Manifest contains an unexpected number of items: "
+            f"expected {len(video_paths)}, got {len(manifest_items)}"
+        )
+
+    if actual_video_paths != expected_video_paths:
+        raise ValueError(
+            "Manifest video paths do not match the requested upload order: "
+            f"expected {expected_video_paths}, got {actual_video_paths}"
+        )
+
+    for manifest_item in manifest_items:
+        ManifestBody.model_validate(manifest_item.body)
 
 
-def _generate_short_videos(
+def _build_manifest_prompt(
     main_video_title: str,
     main_video_description: str,
     last_uploaded_video_dt: datetime.datetime,
-    num: int,
-) -> list[ShortVideo]:
-    prompt = PROMPT_TEMPLATE.substitute(
-        num=num,
+    video_paths: Iterable[pathlib.Path],
+) -> str:
+    normalized_video_paths = [str(video_path) for video_path in video_paths]
+    return MANIFEST_PROMPT_TEMPLATE.substitute(
+        num=len(normalized_video_paths),
         publish_schedule=PUBLISH_SCHEDULE,
         last_uploaded_video_dt=last_uploaded_video_dt,
         main_video_title=main_video_title,
         main_video_description=main_video_description,
+        video_paths="\n".join(normalized_video_paths),
     )
-
-    raw_response = _generate_content_with_local_agent(prompt)
-    response = Response.model_validate_json(raw_response)
-
-    if len(response.short_videos) < num:
-        raise ValueError(
-            "Gemini local agent returned fewer short video descriptions than requested"
-        )
-
-    return response.short_videos[:num]
-
-
-def _generate_content_with_local_agent(prompt: str) -> str:
-    result = subprocess.run(
-        [
-            "gemini",
-            "--model",
-            MODEL_NAME,
-            "--output-format",
-            "json",
-            "-p",
-            prompt,
-        ],
-        capture_output=True,
-        check=True,
-        env=os.environ.copy(),
-        text=True,
-    )
-
-    if not result.stdout.strip():
-        raise ValueError("Gemini local agent returned no output")
-
-    return _extract_model_text_from_gemini_output(result.stdout)
-
-
-def _extract_model_text_from_gemini_output(raw_output: str) -> str:
-    parsed_output = json.loads(raw_output)
-    if isinstance(parsed_output, dict) and "short_videos" in parsed_output:
-        return raw_output
-
-    output_text = _find_text_in_response(parsed_output)
-    if output_text is None:
-        if isinstance(parsed_output, dict) and "error" in parsed_output:
-            raise RuntimeError(f"Gemini local agent error: {parsed_output['error']}")
-        raise ValueError("Unable to parse text response from local gemini agent")
-
-    if not _is_json(output_text):
-        raise ValueError(
-            "Gemini local agent output is not valid JSON for the expected schema"
-        )
-    return output_text
-
-
-def _find_text_in_response(value: object) -> str | None:
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-
-    if isinstance(value, list):
-        for item in reversed(value):
-            text = _find_text_in_response(item)
-            if text is not None:
-                return text
-        return None
-
-    if isinstance(value, dict):
-        response = cast(dict[str, object], value)
-
-        if "text" in response:
-            output_text = _find_text_in_response(response["text"])
-            if output_text is not None:
-                return output_text
-
-        if "content" in response:
-            output_text = _find_text_in_response(response["content"])
-            if output_text is not None:
-                return output_text
-
-        if "output" in response:
-            return _find_text_in_response(response["output"])
-
-        for nested_value in response.values():
-            output_text = _find_text_in_response(nested_value)
-            if output_text is not None:
-                return output_text
-
-        return None
-
-    return None
-
-
-def _is_json(value: str) -> bool:
-    try:
-        json.loads(value)
-        return True
-    except json.JSONDecodeError:
-        return False
 
 
 def _read_file_content(path: pathlib.Path) -> str:
