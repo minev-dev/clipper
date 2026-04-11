@@ -201,39 +201,49 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
     description_path.write_text("Main description", encoding="utf-8")
 
     prompts: list[str] = []
+    generated_record_count = [0]
     monkeypatch.setattr(uploader, "VIDEO_TITLE_PATH", title_path)
     monkeypatch.setattr(uploader, "VIDEO_DESCRIPTION_PATH", description_path)
 
+    def _extract_video_paths_from_prompt(prompt: str) -> list[str]:
+        marker = "Video paths:\n"
+        assert marker in prompt
+        return [line.strip() for line in prompt.split(marker, 1)[1].splitlines() if line.strip()]
+
+    publish_times = [
+        "2026-01-01T10:00:00-08:00",
+        "2026-01-01T18:00:00-08:00",
+        "2026-01-01T22:00:00-08:00",
+        "2026-01-02T10:00:00-08:00",
+        "2026-01-02T18:00:00-08:00",
+        "2026-01-02T22:00:00-08:00",
+        "2026-01-03T10:00:00-08:00",
+        "2026-01-03T18:00:00-08:00",
+        "2026-01-03T22:00:00-08:00",
+        "2026-01-04T10:00:00-08:00",
+        "2026-01-04T18:00:00-08:00",
+    ]
+
     def fake_run(*args, **kwargs):
         assert kwargs["cwd"] == videos_dir
-        prompts.append(args[0][-1])
+        prompt = args[0][-1]
+        prompts.append(prompt)
+        chunk_video_paths = _extract_video_paths_from_prompt(prompt)
+
+        chunk_records = [
+            _make_manifest_item(
+                video_path=pathlib.Path(video_path),
+                title=f"Title {generated_record_count[0] + index}",
+                description=f"Description {generated_record_count[0] + index}",
+                tags=[f"tag-{generated_record_count[0] + index}"],
+                publish_at=publish_times[generated_record_count[0] + index - 1],
+            )
+            for index, video_path in enumerate(chunk_video_paths, start=1)
+        ]
+        generated_record_count[0] += len(chunk_video_paths)
         _write_manifest(
             videos_dir / uploader.UPLOAD_MANIFEST_PATH,
-            [
-                _make_manifest_item(
-                    video_path=videos_dir / f"{index - 1:02}.mp4",
-                    title=f"Title {index}",
-                    description=f"Description {index}",
-                    tags=[f"tag-{index}"],
-                    publish_at=publish_at,
-                )
-                for index, publish_at in enumerate(
-                    [
-                        "2026-01-01T10:00:00-08:00",
-                        "2026-01-01T18:00:00-08:00",
-                        "2026-01-01T22:00:00-08:00",
-                        "2026-01-02T10:00:00-08:00",
-                        "2026-01-02T18:00:00-08:00",
-                        "2026-01-02T22:00:00-08:00",
-                        "2026-01-03T10:00:00-08:00",
-                        "2026-01-03T18:00:00-08:00",
-                        "2026-01-03T22:00:00-08:00",
-                        "2026-01-04T10:00:00-08:00",
-                        "2026-01-04T18:00:00-08:00",
-                    ],
-                    start=1,
-                )
-            ],
+            chunk_records,
         )
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
@@ -263,11 +273,20 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
             "selfDeclaredMadeForKids": False,
         },
     }
-    assert len(prompts) == 1
-    assert "Create the file upload_manifest.jsonl" in prompts[0]
-    assert "Write exactly 11 JSON lines" in prompts[0]
+    assert len(prompts) == 3
+    assert all("Create the file upload_manifest.jsonl" in prompt for prompt in prompts)
+    assert len(_extract_video_paths_from_prompt(prompts[0])) == 5
+    assert len(_extract_video_paths_from_prompt(prompts[1])) == 5
+    assert len(_extract_video_paths_from_prompt(prompts[2])) == 1
+    assert "Write exactly 5 JSON lines" in prompts[0]
+    assert "Write exactly 5 JSON lines" in prompts[1]
+    assert "Write exactly 1 JSON lines" in prompts[2]
+    assert len(prompts) == 3
+    assert all(len(_extract_video_paths_from_prompt(prompt)) <= 5 for prompt in prompts)
     assert "Last video was published at 2026-01-01 09:00:00-08:00" in prompts[0]
-    assert str(videos_dir / "10.mp4") in prompts[0]
+    assert "Last video was published at 2026-01-02 18:00:00-08:00" in prompts[1]
+    assert "Last video was published at 2026-01-04 10:00:00-08:00" in prompts[2]
+    assert str(videos_dir / "10.mp4") in prompts[2]
 
 
 def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):

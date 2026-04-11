@@ -28,6 +28,7 @@ STEP_BAR_FORMAT = (
 UPLOAD_BAR_FORMAT = (
     "{desc:<18} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
 )
+MANIFEST_CHUNK_SIZE = 5
 
 MANIFEST_PROMPT_TEMPLATE = string.Template(
     """
@@ -113,14 +114,22 @@ def prepare(
         progress.update(1)
 
         progress.set_postfix_str("generate manifest", refresh=True)
-        _create_manifest_with_local_agent(
-            videos_dir_path=videos_dir_path,
-            manifest_path=manifest_path,
-            main_video_title=main_video_title,
-            main_video_description=main_video_description,
-            last_uploaded_video_dt=resolved_last_uploaded_video_dt,
-            video_paths=video_paths,
-        )
+        current_last_uploaded_video_dt = resolved_last_uploaded_video_dt
+        for chunk_start in range(0, len(video_paths), MANIFEST_CHUNK_SIZE):
+            chunk_manifest_items = _create_manifest_with_local_agent(
+                videos_dir_path=videos_dir_path,
+                manifest_path=manifest_path,
+                main_video_title=main_video_title,
+                main_video_description=main_video_description,
+                last_uploaded_video_dt=current_last_uploaded_video_dt,
+                video_paths=video_paths[
+                    chunk_start : chunk_start + MANIFEST_CHUNK_SIZE
+                ],
+                append=chunk_start > 0,
+            )
+            current_last_uploaded_video_dt = _get_last_publish_at(
+                manifest_items=chunk_manifest_items
+            )
         progress.update(1)
 
         progress.set_postfix_str("validate manifest", refresh=True)
@@ -246,14 +255,22 @@ def _create_manifest_with_local_agent(
     main_video_description: str,
     last_uploaded_video_dt: datetime.datetime,
     video_paths: list[pathlib.Path],
-) -> None:
+    *,
+    append: bool = False,
+) -> list[ManifestItem]:
     prompt = _build_manifest_prompt(
         main_video_title=main_video_title,
         main_video_description=main_video_description,
         last_uploaded_video_dt=last_uploaded_video_dt,
         video_paths=video_paths,
     )
-    if manifest_path.exists():
+    previous_manifest_lines: list[str] = []
+    if append and manifest_path.exists():
+        with open(manifest_path, "r", encoding="utf-8") as file:
+            previous_manifest_lines = [line for line in file.read().splitlines() if line]
+        manifest_path.unlink()
+
+    elif manifest_path.exists():
         manifest_path.unlink()
 
     result = subprocess.run(
@@ -273,13 +290,38 @@ def _create_manifest_with_local_agent(
         text=True,
     )
 
-    if manifest_path.exists():
-        return
+    if not manifest_path.exists():
+        raise RuntimeError(
+            "Gemini local agent did not create the manifest file. "
+            f"stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}"
+        )
 
-    raise RuntimeError(
-        "Gemini local agent did not create the manifest file. "
-        f"stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}"
-    )
+    generated_manifest_items = _read_manifest(manifest_path=manifest_path)
+    _validate_manifest(manifest_items=generated_manifest_items, video_paths=video_paths)
+
+    if append and previous_manifest_lines:
+        chunk_manifest_lines = manifest_path.read_text(encoding="utf-8").splitlines()
+        merged_manifest_lines = previous_manifest_lines + [
+            line for line in chunk_manifest_lines if line
+        ]
+        manifest_path.write_text(
+            "\n".join(merged_manifest_lines) + "\n",
+            encoding="utf-8",
+        )
+
+    return generated_manifest_items
+
+
+def _get_last_publish_at(manifest_items: list[ManifestItem]) -> datetime.datetime:
+    if not manifest_items:
+        raise ValueError("Manifest is empty")
+
+    last_publish_at = manifest_items[-1].body["status"]["publishAt"]
+    if not isinstance(last_publish_at, str):
+        raise ValueError(f"Manifest publishAt is not a string: {last_publish_at!r}")
+
+    return datetime.datetime.fromisoformat(last_publish_at)
+
 
 
 def _read_manifest(manifest_path: pathlib.Path) -> list[ManifestItem]:
