@@ -138,11 +138,13 @@ def _build_manifest(
     last_uploaded_video_dt_str: str,
     video_paths: list[pathlib.Path],
 ) -> list[ManifestItem]:
+    video_count = len(video_paths)
     manifest_items: list[ManifestItem] = []
     video_data_gen = _get_short_videos_descriptions(
         main_video_title=main_video_title,
         main_video_description=main_video_description,
         last_uploaded_video_dt_str=last_uploaded_video_dt_str,
+        num=video_count,
     )
 
     for video_path in video_paths:
@@ -200,25 +202,43 @@ def _get_short_videos_descriptions(
     main_video_title: str,
     main_video_description: str,
     last_uploaded_video_dt_str: str,
-    num: int = 9,
+    num: int,
 ) -> Generator[ShortVideo, None, None]:
     last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt_str)
+    if num <= 0:
+        return
 
-    while True:
-        prompt = PROMPT_TEMPLATE.substitute(
-            num=num,
-            publish_schedule=PUBLISH_SCHEDULE,
-            last_uploaded_video_dt=last_uploaded_video_dt,
-            main_video_title=main_video_title,
-            main_video_description=main_video_description,
+    yield from _generate_short_videos(
+        main_video_title=main_video_title,
+        main_video_description=main_video_description,
+        last_uploaded_video_dt=last_uploaded_video_dt,
+        num=num,
+    )
+
+
+def _generate_short_videos(
+    main_video_title: str,
+    main_video_description: str,
+    last_uploaded_video_dt: datetime.datetime,
+    num: int,
+) -> list[ShortVideo]:
+    prompt = PROMPT_TEMPLATE.substitute(
+        num=num,
+        publish_schedule=PUBLISH_SCHEDULE,
+        last_uploaded_video_dt=last_uploaded_video_dt,
+        main_video_title=main_video_title,
+        main_video_description=main_video_description,
+    )
+
+    raw_response = _generate_content_with_local_agent(prompt)
+    response = Response.model_validate_json(raw_response)
+
+    if len(response.short_videos) < num:
+        raise ValueError(
+            "Gemini local agent returned fewer short video descriptions than requested"
         )
 
-        raw_response = _generate_content_with_local_agent(prompt)
-        response = Response.model_validate_json(raw_response)
-
-        assert len(response.short_videos) == num
-        yield from response.short_videos
-        last_uploaded_video_dt += datetime.timedelta(days=3)
+    return response.short_videos[:num]
 
 
 def _generate_content_with_local_agent(prompt: str) -> str:
