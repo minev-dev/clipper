@@ -4,7 +4,6 @@ import os
 import pathlib
 import string
 import subprocess
-import tempfile
 from typing import Generator, cast
 
 import pydantic
@@ -242,12 +241,6 @@ def _generate_short_videos(
 
 
 def _generate_content_with_local_agent(prompt: str) -> str:
-    gemini_home = pathlib.Path(tempfile.gettempdir()) / ".gemini_cli_home"
-    (gemini_home / ".gemini").mkdir(parents=True, exist_ok=True)
-
-    env = os.environ.copy()
-    env["HOME"] = str(gemini_home)
-
     result = subprocess.run(
         [
             "gemini",
@@ -260,7 +253,7 @@ def _generate_content_with_local_agent(prompt: str) -> str:
         ],
         capture_output=True,
         check=True,
-        env=env,
+        env=os.environ.copy(),
         text=True,
     )
 
