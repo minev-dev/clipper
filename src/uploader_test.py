@@ -1,21 +1,39 @@
 import json
 import pathlib
 import subprocess
+from typing import Any
 
 from src import uploader
 
 
 class _FakeInsertRequest:
-    def __init__(self, response: dict[str, object]):
+    def __init__(self, response: dict[str, object], chunk_progress: list[int] | None = None):
         self._response = response
+        self._chunk_progress = chunk_progress or []
+        self.next_chunk_calls = 0
 
     def execute(self) -> dict[str, object]:
         return self._response
 
+    def next_chunk(self) -> tuple[object | None, dict[str, object] | None]:
+        self.next_chunk_calls += 1
+        if self._chunk_progress:
+            uploaded_bytes = self._chunk_progress.pop(0)
+            if self._chunk_progress:
+                return _FakeUploadStatus(uploaded_bytes), None
+            return _FakeUploadStatus(uploaded_bytes), self._response
+
+        return None, self._response
+
+
+class _FakeUploadStatus:
+    def __init__(self, uploaded_bytes: int):
+        self.resumable_progress = uploaded_bytes
+
 
 class _FakeVideosResource:
     def __init__(self):
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def insert(
         self,
@@ -24,14 +42,19 @@ class _FakeVideosResource:
         body: dict[str, object],
         media_body: object,
     ) -> _FakeInsertRequest:
+        request = _FakeInsertRequest(
+            {"status": {"uploadStatus": "uploaded"}},
+            chunk_progress=[3, 7],
+        )
         self.calls.append(
             {
                 "part": part,
                 "body": body,
                 "media_body": media_body,
+                "request": request,
             }
         )
-        return _FakeInsertRequest({"status": {"uploadStatus": "uploaded"}})
+        return request
 
 
 class _FakeYouTube:
@@ -306,6 +329,17 @@ def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):
         "status": {"publishAt": "2026-01-01T10:00:00-08:00"},
     }
     assert upload_calls[0]["media_body"] == videos_dir / "a.mp4"
+    request = upload_calls[0]["request"]
+    assert isinstance(request, _FakeInsertRequest)
+    assert request.next_chunk_calls == 2
+
+
+def test_get_uploaded_bytes_falls_back_to_progress_fraction():
+    class _ProgressStatus:
+        def progress(self) -> float:
+            return 0.5
+
+    assert uploader._get_uploaded_bytes(_ProgressStatus(), total_bytes=10) == 5
 
 
 def test_prepare_raises_when_agent_does_not_create_manifest(monkeypatch, tmp_path):

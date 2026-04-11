@@ -3,9 +3,10 @@ import os
 import pathlib
 import string
 import subprocess
-from typing import Iterable
+from typing import Any, Iterable, cast
 
 import pydantic
+import tqdm
 import typer
 from google.oauth2 import credentials
 from googleapiclient import discovery, http
@@ -21,6 +22,12 @@ UPLOAD_MANIFEST_PATH = "upload_manifest.jsonl"
 
 PUBLISH_SCHEDULE = "3 times a day (at 10am, 6pm, 10pm)"
 MODEL_NAME = "gemini-3.1-pro-preview"
+STEP_BAR_FORMAT = (
+    "{desc:<10} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} steps [{elapsed}<{remaining}]"
+)
+UPLOAD_BAR_FORMAT = (
+    "{desc:<18} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+)
 
 MANIFEST_PROMPT_TEMPLATE = string.Template(
     """
@@ -48,7 +55,7 @@ $video_paths
 
 class ManifestItem(pydantic.BaseModel):
     video_path: str
-    body: dict[str, object]
+    body: dict[str, Any]
 
 
 class ManifestSnippet(pydantic.BaseModel):
@@ -86,25 +93,42 @@ def prepare(
         last_uploaded_video_dt: The date and time of the last uploaded video.
             Can be "now" or an ISO formatted date string.
     """
-    video_paths = sorted(
-        video_path for video_path in videos_dir_path.iterdir() if video_path.suffix == ".mp4"
-    )
-    if not video_paths:
-        logger.info(f"No .mp4 files found in {videos_dir_path}")
-        return
+    with _create_step_progress(description="prepare", total=4) as progress:
+        progress.set_postfix_str("scan videos", refresh=True)
+        video_paths = sorted(
+            video_path for video_path in videos_dir_path.iterdir() if video_path.suffix == ".mp4"
+        )
+        if not video_paths:
+            progress.close()
+            logger.info(f"No .mp4 files found in {videos_dir_path}")
+            return
 
-    resolved_last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt)
-    manifest_path = videos_dir_path / UPLOAD_MANIFEST_PATH
-    _create_manifest_with_local_agent(
-        videos_dir_path=videos_dir_path,
-        manifest_path=manifest_path,
-        main_video_title=_read_file_content(path=VIDEO_TITLE_PATH),
-        main_video_description=_read_file_content(path=VIDEO_DESCRIPTION_PATH),
-        last_uploaded_video_dt=resolved_last_uploaded_video_dt,
-        video_paths=video_paths,
-    )
-    manifest_items = _read_manifest(manifest_path=manifest_path)
-    _validate_manifest(manifest_items=manifest_items, video_paths=video_paths)
+        progress.update(1)
+
+        progress.set_postfix_str(f"load context ({len(video_paths)} videos)", refresh=True)
+        resolved_last_uploaded_video_dt = utils.parse_datetime(last_uploaded_video_dt)
+        manifest_path = videos_dir_path / UPLOAD_MANIFEST_PATH
+        main_video_title = _read_file_content(path=VIDEO_TITLE_PATH)
+        main_video_description = _read_file_content(path=VIDEO_DESCRIPTION_PATH)
+        progress.update(1)
+
+        progress.set_postfix_str("generate manifest", refresh=True)
+        _create_manifest_with_local_agent(
+            videos_dir_path=videos_dir_path,
+            manifest_path=manifest_path,
+            main_video_title=main_video_title,
+            main_video_description=main_video_description,
+            last_uploaded_video_dt=resolved_last_uploaded_video_dt,
+            video_paths=video_paths,
+        )
+        progress.update(1)
+
+        progress.set_postfix_str("validate manifest", refresh=True)
+        manifest_items = _read_manifest(manifest_path=manifest_path)
+        _validate_manifest(manifest_items=manifest_items, video_paths=video_paths)
+        progress.update(1)
+        progress.set_postfix_str("done", refresh=True)
+
     logger.info(f"Created manifest: {manifest_path}")
 
 
@@ -129,29 +153,90 @@ def upload(
     creds = credentials.Credentials.from_authorized_user_file(
         filename=google_auth.CREDENTIALS_PATH
     )
-    youtube = discovery.build("youtube", "v3", credentials=creds)
+    youtube = cast(Any, discovery.build("youtube", "v3", credentials=creds))
 
     uploaded_videos_dir_path = videos_dir_path / "uploaded"
     uploaded_videos_dir_path.mkdir(exist_ok=True)
 
-    for manifest_item in manifest_items:
-        video_path = pathlib.Path(manifest_item.video_path)
-        if not video_path.exists():
-            raise FileNotFoundError(f"Manifest references a missing video file: {video_path}")
+    overall_progress = _create_step_progress(description="upload", total=len(manifest_items))
+    try:
+        for manifest_item in manifest_items:
+            video_path = pathlib.Path(manifest_item.video_path)
+            if not video_path.exists():
+                raise FileNotFoundError(f"Manifest references a missing video file: {video_path}")
 
-        media = http.MediaFileUpload(video_path, resumable=True)
+            overall_progress.set_postfix_str(video_path.name, refresh=True)
+            response = _upload_video(
+                youtube=youtube,
+                video_path=video_path,
+                body=manifest_item.body,
+            )
 
-        response = (
-            youtube.videos()
-            .insert(part="snippet,status", body=manifest_item.body, media_body=media)
-            .execute()
-        )
+            if response["status"]["uploadStatus"] == "uploaded":
+                logger.info(f"Uploaded {video_path.stem}")
+                video_path.rename(uploaded_videos_dir_path / video_path.name)
+                overall_progress.update(1)
+            else:
+                raise Exception(f"Failed to upload: {response}")
 
-        if response["status"]["uploadStatus"] == "uploaded":
-            logger.info(f"Uploaded {video_path.stem}")
-            video_path.rename(uploaded_videos_dir_path / video_path.name)
-        else:
-            raise Exception(f"Failed to upload: {response}")
+        overall_progress.set_postfix_str("done", refresh=True)
+    finally:
+        overall_progress.close()
+
+
+def _upload_video(
+    youtube: Any,
+    video_path: pathlib.Path,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    media = http.MediaFileUpload(str(video_path), resumable=True)
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=media,
+    )
+
+    total_bytes = video_path.stat().st_size
+    progress_description = f"{video_path.stem[:18]}"
+    with tqdm.tqdm(
+        total=total_bytes,
+        desc=progress_description,
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+        dynamic_ncols=True,
+        leave=False,
+        colour="blue",
+        bar_format=UPLOAD_BAR_FORMAT,
+    ) as progress:
+        if hasattr(request, "next_chunk"):
+            response = None
+            while response is None:
+                status, response = request.next_chunk()
+                uploaded_bytes = _get_uploaded_bytes(status=status, total_bytes=total_bytes)
+                progress.update(max(0, uploaded_bytes - progress.n))
+
+            progress.update(max(0, total_bytes - progress.n))
+            return response
+
+        response = request.execute()
+        progress.update(total_bytes)
+        return response
+
+
+def _get_uploaded_bytes(status: object, total_bytes: int) -> int:
+    if status is None:
+        return 0
+
+    resumable_progress = getattr(status, "resumable_progress", None)
+    if resumable_progress is not None:
+        return int(resumable_progress)
+
+    progress = getattr(status, "progress", None)
+    if callable(progress):
+        return int(progress() * total_bytes)
+
+    return 0
 
 
 def _create_manifest_with_local_agent(
@@ -252,6 +337,17 @@ def _build_manifest_prompt(
 def _read_file_content(path: pathlib.Path) -> str:
     with open(path, "r", encoding="utf-8") as file:
         return file.read()
+
+
+def _create_step_progress(description: str, total: int) -> tqdm.tqdm:
+    return tqdm.tqdm(
+        total=total,
+        desc=description,
+        unit="step",
+        dynamic_ncols=True,
+        colour="green",
+        bar_format=STEP_BAR_FORMAT,
+    )
 
 
 if __name__ == "__main__":
