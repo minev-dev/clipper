@@ -473,6 +473,113 @@ def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):
     assert request.next_chunk_calls == 2
 
 
+def test_upload_skips_manifest_entries_already_moved_to_uploaded(monkeypatch, tmp_path):
+    videos_dir = tmp_path / "videos"
+    videos_dir.mkdir()
+    uploaded_dir = videos_dir / "uploaded"
+    uploaded_dir.mkdir()
+    (uploaded_dir / "a.mp4").write_text("video-a", encoding="utf-8")
+    (videos_dir / "b.mp4").write_text("video-b", encoding="utf-8")
+
+    manifest_items = [
+        uploader.ManifestItem(
+            video_path=str(videos_dir / "a.mp4"),
+            body={
+                "snippet": {"title": "Alpha"},
+                "status": {"publishAt": "2026-01-01T10:00:00-08:00"},
+            },
+        ),
+        uploader.ManifestItem(
+            video_path=str(videos_dir / "b.mp4"),
+            body={
+                "snippet": {"title": "Bravo"},
+                "status": {"publishAt": "2026-01-01T18:00:00-08:00"},
+            },
+        ),
+    ]
+    manifest_path = videos_dir / uploader.UPLOAD_MANIFEST_PATH
+    _write_manifest(
+        manifest_path,
+        [manifest_item.model_dump(mode="json") for manifest_item in manifest_items],
+    )
+
+    fake_youtube = _FakeYouTube()
+    fake_progress_bars: list[_FakeProgressBar] = []
+    monkeypatch.setattr(
+        uploader.credentials.Credentials,
+        "from_authorized_user_file",
+        lambda filename: object(),
+    )
+    monkeypatch.setattr(
+        uploader.discovery,
+        "build",
+        lambda service_name, version, credentials: fake_youtube,
+    )
+    monkeypatch.setattr(
+        uploader.http,
+        "MediaFileUpload",
+        lambda path, resumable: pathlib.Path(path),
+    )
+    monkeypatch.setattr(
+        uploader,
+        "_create_step_progress",
+        lambda description, total: fake_progress_bars.append(_FakeProgressBar(total)) or fake_progress_bars[-1],
+    )
+
+    uploader.upload(videos_dir_path=videos_dir)
+
+    upload_calls = fake_youtube.videos_resource.calls
+    assert len(upload_calls) == 1
+    assert upload_calls[0]["media_body"] == videos_dir / "b.mp4"
+    assert (uploaded_dir / "a.mp4").exists()
+    assert (uploaded_dir / "b.mp4").exists()
+
+    assert len(fake_progress_bars) == 1
+    progress_bar = fake_progress_bars[0]
+    assert progress_bar.total == 2
+    assert progress_bar.n == 2
+    assert progress_bar.postfixes == ["a.mp4", "b.mp4", "done"]
+
+
+def test_upload_raises_for_manifest_entry_missing_from_source_and_uploaded_dir(
+    monkeypatch, tmp_path
+):
+    videos_dir = tmp_path / "videos"
+    videos_dir.mkdir()
+
+    manifest_path = videos_dir / uploader.UPLOAD_MANIFEST_PATH
+    _write_manifest(
+        manifest_path,
+        [
+            {
+                "video_path": str(videos_dir / "missing.mp4"),
+                "body": {
+                    "snippet": {"title": "Missing"},
+                    "status": {"publishAt": "2026-01-01T10:00:00-08:00"},
+                },
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        uploader.credentials.Credentials,
+        "from_authorized_user_file",
+        lambda filename: object(),
+    )
+    monkeypatch.setattr(
+        uploader.discovery,
+        "build",
+        lambda service_name, version, credentials: _FakeYouTube(),
+    )
+
+    try:
+        uploader.upload(videos_dir_path=videos_dir)
+    except FileNotFoundError as error:
+        assert str(videos_dir / "missing.mp4") in str(error)
+    else:
+        raise AssertionError("Expected upload() to fail when the manifest video is missing")
+
+
 def test_get_uploaded_bytes_falls_back_to_progress_fraction():
     class _ProgressStatus:
         def progress(self) -> float:

@@ -177,19 +177,25 @@ def upload(
     try:
         for manifest_item in manifest_items:
             video_path = pathlib.Path(manifest_item.video_path)
-            if not video_path.exists():
-                raise FileNotFoundError(f"Manifest references a missing video file: {video_path}")
-
             overall_progress.set_postfix_str(video_path.name, refresh=True)
+            resolved_video_path = _resolve_manifest_video_path(
+                video_path=video_path,
+                uploaded_videos_dir_path=uploaded_videos_dir_path,
+            )
+            if resolved_video_path is None:
+                logger.info(f"Skipping {video_path.stem}; already uploaded")
+                overall_progress.update(1)
+                continue
+
             response = _upload_video(
                 youtube=youtube,
-                video_path=video_path,
+                video_path=resolved_video_path,
                 body=manifest_item.body,
             )
 
             if response["status"]["uploadStatus"] == "uploaded":
-                logger.info(f"Uploaded {video_path.stem}")
-                video_path.rename(uploaded_videos_dir_path / video_path.name)
+                logger.info(f"Uploaded {resolved_video_path.stem}")
+                resolved_video_path.rename(uploaded_videos_dir_path / resolved_video_path.name)
                 overall_progress.update(1)
             else:
                 raise Exception(f"Failed to upload: {response}")
@@ -197,6 +203,20 @@ def upload(
         overall_progress.set_postfix_str("done", refresh=True)
     finally:
         overall_progress.close()
+
+
+def _resolve_manifest_video_path(
+    video_path: pathlib.Path,
+    uploaded_videos_dir_path: pathlib.Path,
+) -> pathlib.Path | None:
+    if video_path.exists():
+        return video_path
+
+    uploaded_video_path = uploaded_videos_dir_path / video_path.name
+    if uploaded_video_path.exists():
+        return None
+
+    raise FileNotFoundError(f"Manifest references a missing video file: {video_path}")
 
 
 def _upload_video(
