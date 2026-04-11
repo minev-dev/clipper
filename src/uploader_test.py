@@ -116,9 +116,11 @@ def test_prepare_creates_jsonl_manifest(monkeypatch, tmp_path):
 
     def fake_run(*args, **kwargs):
         assert kwargs["cwd"] == videos_dir
-        assert args[0][0] == "gemini"
-        assert "--approval-mode" in args[0]
-        assert "auto_edit" in args[0]
+        assert args[0][0] == "codex"
+        assert args[0][1] == "exec"
+        assert "--model" in args[0]
+        assert "gpt-5.4" in args[0]
+        assert "--skip-git-repo-check" in args[0]
         _write_manifest(
             videos_dir / uploader.UPLOAD_MANIFEST_PATH,
             [
@@ -388,6 +390,7 @@ def test_prepare_raises_when_agent_does_not_create_manifest(monkeypatch, tmp_pat
         uploader.prepare(videos_dir_path=videos_dir)
     except RuntimeError as error:
         assert "did not create the manifest file" in str(error)
+        assert "Codex CLI" in str(error)
     else:
         raise AssertionError("Expected prepare() to fail when the manifest is missing")
 

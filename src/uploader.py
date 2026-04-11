@@ -21,7 +21,7 @@ VIDEO_DESCRIPTION_PATH = utils.DIST_DIR / "video" / "description.txt"
 UPLOAD_MANIFEST_PATH = "upload_manifest.jsonl"
 
 PUBLISH_SCHEDULE = "3 times a day (at 10am, 6pm, 10pm)"
-MODEL_NAME = "gemini-3.1-pro-preview"
+CODEX_MODEL = "gpt-5.4"
 STEP_BAR_FORMAT = (
     "{desc:<10} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} steps [{elapsed}<{remaining}]"
 )
@@ -116,7 +116,7 @@ def prepare(
         progress.set_postfix_str("generate manifest", refresh=True)
         current_last_uploaded_video_dt = resolved_last_uploaded_video_dt
         for chunk_start in range(0, len(video_paths), MANIFEST_CHUNK_SIZE):
-            chunk_manifest_items = _create_manifest_with_local_agent(
+            chunk_manifest_items = _create_manifest_with_codex_cli(
                 videos_dir_path=videos_dir_path,
                 manifest_path=manifest_path,
                 main_video_title=main_video_title,
@@ -248,7 +248,7 @@ def _get_uploaded_bytes(status: object, total_bytes: int) -> int:
     return 0
 
 
-def _create_manifest_with_local_agent(
+def _create_manifest_with_codex_cli(
     videos_dir_path: pathlib.Path,
     manifest_path: pathlib.Path,
     main_video_title: str,
@@ -275,12 +275,11 @@ def _create_manifest_with_local_agent(
 
     result = subprocess.run(
         [
-            "gemini",
+            "codex",
+            "exec",
             "--model",
-            MODEL_NAME,
-            "--approval-mode",
-            "auto_edit",
-            "-p",
+            CODEX_MODEL,
+            "--skip-git-repo-check",
             prompt,
         ],
         capture_output=True,
@@ -292,7 +291,7 @@ def _create_manifest_with_local_agent(
 
     if not manifest_path.exists():
         raise RuntimeError(
-            "Gemini local agent did not create the manifest file. "
+            "Codex CLI did not create the manifest file. "
             f"stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}"
         )
 
