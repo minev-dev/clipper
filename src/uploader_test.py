@@ -65,6 +65,30 @@ class _FakeYouTube:
         return self.videos_resource
 
 
+class _FakeProgressBar:
+    def __init__(self, total: int):
+        self.total = total
+        self.n = 0
+        self.postfixes: list[str] = []
+        self.closed = False
+
+    def __enter__(self) -> "_FakeProgressBar":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    def set_postfix_str(self, value: str, refresh: bool = False) -> None:
+        del refresh
+        self.postfixes.append(value)
+
+    def update(self, value: int) -> None:
+        self.n += value
+
+
 def _make_manifest_item(
     video_path: pathlib.Path,
     title: str,
@@ -291,6 +315,86 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
     assert str(videos_dir / "10.mp4") in prompts[2]
 
 
+def test_prepare_tracks_each_manifest_chunk_in_progress(monkeypatch, tmp_path):
+    videos_dir = tmp_path / "videos"
+    videos_dir.mkdir()
+    for index in range(11):
+        (videos_dir / f"{index:02}.mp4").write_text(f"video-{index}", encoding="utf-8")
+
+    title_path = tmp_path / "title.txt"
+    description_path = tmp_path / "description.txt"
+    title_path.write_text("Main title", encoding="utf-8")
+    description_path.write_text("Main description", encoding="utf-8")
+
+    monkeypatch.setattr(uploader, "VIDEO_TITLE_PATH", title_path)
+    monkeypatch.setattr(uploader, "VIDEO_DESCRIPTION_PATH", description_path)
+
+    fake_progress_bars: list[_FakeProgressBar] = []
+
+    def fake_create_step_progress(description: str, total: int) -> _FakeProgressBar:
+        assert description == "prepare"
+        progress_bar = _FakeProgressBar(total=total)
+        fake_progress_bars.append(progress_bar)
+        return progress_bar
+
+    publish_times = [
+        "2026-01-01T10:00:00-08:00",
+        "2026-01-01T18:00:00-08:00",
+        "2026-01-01T22:00:00-08:00",
+        "2026-01-02T10:00:00-08:00",
+        "2026-01-02T18:00:00-08:00",
+        "2026-01-02T22:00:00-08:00",
+        "2026-01-03T10:00:00-08:00",
+        "2026-01-03T18:00:00-08:00",
+        "2026-01-03T22:00:00-08:00",
+        "2026-01-04T10:00:00-08:00",
+        "2026-01-04T18:00:00-08:00",
+    ]
+    generated_record_count = [0]
+
+    def fake_run(*args, **kwargs):
+        del args, kwargs
+        chunk_size = min(
+            uploader.MANIFEST_CHUNK_SIZE,
+            11 - generated_record_count[0],
+        )
+        chunk_records = [
+            _make_manifest_item(
+                video_path=videos_dir / f"{generated_record_count[0] + index:02}.mp4",
+                title=f"Title {generated_record_count[0] + index + 1}",
+                description=f"Description {generated_record_count[0] + index + 1}",
+                tags=[f"tag-{generated_record_count[0] + index + 1}"],
+                publish_at=publish_times[generated_record_count[0] + index],
+            )
+            for index in range(chunk_size)
+        ]
+        generated_record_count[0] += chunk_size
+        _write_manifest(videos_dir / uploader.UPLOAD_MANIFEST_PATH, chunk_records)
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(uploader, "_create_step_progress", fake_create_step_progress)
+    monkeypatch.setattr(uploader.subprocess, "run", fake_run)
+
+    uploader.prepare(
+        videos_dir_path=videos_dir,
+        last_uploaded_video_dt="2026-01-01T09:00:00-08:00",
+    )
+
+    assert len(fake_progress_bars) == 1
+    progress_bar = fake_progress_bars[0]
+    assert progress_bar.total == 6
+    assert progress_bar.n == 6
+    assert progress_bar.postfixes == [
+        "scan videos",
+        "load context (11 videos)",
+        "generate manifest (1/3)",
+        "generate manifest (2/3)",
+        "generate manifest (3/3)",
+        "validate manifest",
+        "done",
+    ]
+
+
 def test_upload_uses_manifest_and_moves_videos(monkeypatch, tmp_path):
     videos_dir = tmp_path / "videos"
     videos_dir.mkdir()
@@ -361,6 +465,11 @@ def test_get_uploaded_bytes_falls_back_to_progress_fraction():
             return 0.5
 
     assert uploader._get_uploaded_bytes(_ProgressStatus(), total_bytes=10) == 5
+
+
+def test_progress_bar_formats_render_postfix():
+    assert "{postfix}" in uploader.STEP_BAR_FORMAT
+    assert "{postfix}" in uploader.UPLOAD_BAR_FORMAT
 
 
 def test_prepare_raises_when_agent_does_not_create_manifest(monkeypatch, tmp_path):

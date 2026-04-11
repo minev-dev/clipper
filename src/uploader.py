@@ -1,4 +1,5 @@
 import datetime
+import math
 import os
 import pathlib
 import string
@@ -23,10 +24,10 @@ UPLOAD_MANIFEST_PATH = "upload_manifest.jsonl"
 PUBLISH_SCHEDULE = "3 times a day (at 10am, 6pm, 10pm)"
 CODEX_MODEL = "gpt-5.4"
 STEP_BAR_FORMAT = (
-    "{desc:<10} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} steps [{elapsed}<{remaining}]"
+    "{desc:<10} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} steps [{elapsed}<{remaining}] {postfix}"
 )
 UPLOAD_BAR_FORMAT = (
-    "{desc:<18} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+    "{desc:<18} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}"
 )
 MANIFEST_CHUNK_SIZE = 5
 
@@ -94,16 +95,18 @@ def prepare(
         last_uploaded_video_dt: The date and time of the last uploaded video.
             Can be "now" or an ISO formatted date string.
     """
-    with _create_step_progress(description="prepare", total=4) as progress:
-        progress.set_postfix_str("scan videos", refresh=True)
-        video_paths = sorted(
-            video_path for video_path in videos_dir_path.iterdir() if video_path.suffix == ".mp4"
-        )
-        if not video_paths:
-            progress.close()
-            logger.info(f"No .mp4 files found in {videos_dir_path}")
-            return
+    video_paths = sorted(
+        video_path for video_path in videos_dir_path.iterdir() if video_path.suffix == ".mp4"
+    )
+    if not video_paths:
+        logger.info(f"No .mp4 files found in {videos_dir_path}")
+        return
 
+    manifest_chunk_count = math.ceil(len(video_paths) / MANIFEST_CHUNK_SIZE)
+    total_steps = 3 + manifest_chunk_count
+
+    with _create_step_progress(description="prepare", total=total_steps) as progress:
+        progress.set_postfix_str("scan videos", refresh=True)
         progress.update(1)
 
         progress.set_postfix_str(f"load context ({len(video_paths)} videos)", refresh=True)
@@ -113,9 +116,15 @@ def prepare(
         main_video_description = _read_file_content(path=VIDEO_DESCRIPTION_PATH)
         progress.update(1)
 
-        progress.set_postfix_str("generate manifest", refresh=True)
         current_last_uploaded_video_dt = resolved_last_uploaded_video_dt
-        for chunk_start in range(0, len(video_paths), MANIFEST_CHUNK_SIZE):
+        for chunk_index, chunk_start in enumerate(
+            range(0, len(video_paths), MANIFEST_CHUNK_SIZE),
+            start=1,
+        ):
+            progress.set_postfix_str(
+                f"generate manifest ({chunk_index}/{manifest_chunk_count})",
+                refresh=True,
+            )
             chunk_manifest_items = _create_manifest_with_codex_cli(
                 videos_dir_path=videos_dir_path,
                 manifest_path=manifest_path,
@@ -130,7 +139,7 @@ def prepare(
             current_last_uploaded_video_dt = _get_last_publish_at(
                 manifest_items=chunk_manifest_items
             )
-        progress.update(1)
+            progress.update(1)
 
         progress.set_postfix_str("validate manifest", refresh=True)
         manifest_items = _read_manifest(manifest_path=manifest_path)
