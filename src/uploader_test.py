@@ -123,6 +123,10 @@ def _write_manifest(path: pathlib.Path, manifest_items: list[dict[str, object]])
     )
 
 
+def _format_manifest_output(manifest_items: list[dict[str, object]]) -> str:
+    return "\n".join(json.dumps(manifest_item) for manifest_item in manifest_items) + "\n"
+
+
 def test_prepare_creates_jsonl_manifest(monkeypatch, tmp_path):
     videos_dir = tmp_path / "videos"
     videos_dir.mkdir()
@@ -145,26 +149,28 @@ def test_prepare_creates_jsonl_manifest(monkeypatch, tmp_path):
         assert "--model" in args[0]
         assert "gpt-5.4" in args[0]
         assert "--skip-git-repo-check" in args[0]
-        _write_manifest(
-            videos_dir / uploader.UPLOAD_MANIFEST_PATH,
-            [
-                _make_manifest_item(
-                    video_path=videos_dir / "a.mp4",
-                    title="Alpha title",
-                    description="Alpha description",
-                    tags=["alpha", "viral"],
-                    publish_at="2026-01-01T10:00:00-08:00",
-                ),
-                _make_manifest_item(
-                    video_path=videos_dir / "b.mp4",
-                    title="Bravo title",
-                    description="Bravo description",
-                    tags=["bravo", "viral"],
-                    publish_at="2026-01-01T18:00:00-08:00",
-                ),
-            ],
+        manifest_items = [
+            _make_manifest_item(
+                video_path=videos_dir / "a.mp4",
+                title="Alpha title",
+                description="Alpha description",
+                tags=["alpha", "viral"],
+                publish_at="2026-01-01T10:00:00-08:00",
+            ),
+            _make_manifest_item(
+                video_path=videos_dir / "b.mp4",
+                title="Bravo title",
+                description="Bravo description",
+                tags=["bravo", "viral"],
+                publish_at="2026-01-01T18:00:00-08:00",
+            ),
+        ]
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=_format_manifest_output(manifest_items),
+            stderr="",
         )
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(uploader.subprocess, "run", fake_run)
 
@@ -267,11 +273,15 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
             for index, video_path in enumerate(chunk_video_paths, start=1)
         ]
         generated_record_count[0] += len(chunk_video_paths)
-        _write_manifest(
-            videos_dir / uploader.UPLOAD_MANIFEST_PATH,
+        generated_output = _format_manifest_output(
             chunk_records,
         )
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=generated_output,
+            stderr="",
+        )
 
     monkeypatch.setattr(uploader.subprocess, "run", fake_run)
 
@@ -300,7 +310,7 @@ def test_prepare_creates_manifest_for_more_than_nine_videos(monkeypatch, tmp_pat
         },
     }
     assert len(prompts) == 3
-    assert all("Create the file upload_manifest.jsonl" in prompt for prompt in prompts)
+    assert all("Write exactly" in prompt for prompt in prompts)
     assert len(_extract_video_paths_from_prompt(prompts[0])) == 5
     assert len(_extract_video_paths_from_prompt(prompts[1])) == 5
     assert len(_extract_video_paths_from_prompt(prompts[2])) == 1
@@ -369,8 +379,12 @@ def test_prepare_tracks_each_manifest_chunk_in_progress(monkeypatch, tmp_path):
             for index in range(chunk_size)
         ]
         generated_record_count[0] += chunk_size
-        _write_manifest(videos_dir / uploader.UPLOAD_MANIFEST_PATH, chunk_records)
-        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=_format_manifest_output(chunk_records),
+            stderr="",
+        )
 
     monkeypatch.setattr(uploader, "_create_step_progress", fake_create_step_progress)
     monkeypatch.setattr(uploader.subprocess, "run", fake_run)
@@ -472,6 +486,34 @@ def test_progress_bar_formats_render_postfix():
     assert "{postfix}" in uploader.UPLOAD_BAR_FORMAT
 
 
+def test_extract_manifest_lines_requires_plain_jsonl_output(tmp_path):
+    manifest_output = _format_manifest_output(
+        [
+            _make_manifest_item(
+                video_path=tmp_path / "clip.mp4",
+                title="Clip title",
+                description="Clip description",
+                tags=["clip", "viral"],
+                publish_at="2026-01-01T10:00:00-08:00",
+            )
+        ]
+    )
+
+    assert uploader._extract_manifest_lines(manifest_output) == [
+        json.dumps(
+            _make_manifest_item(
+                video_path=tmp_path / "clip.mp4",
+                title="Clip title",
+                description="Clip description",
+                tags=["clip", "viral"],
+                publish_at="2026-01-01T10:00:00-08:00",
+            )
+        )
+    ]
+    assert uploader._extract_manifest_lines(f"```json\n{manifest_output}```") == []
+    assert uploader._extract_manifest_lines(f"Here you go\n{manifest_output}") == []
+
+
 def test_prepare_raises_when_agent_does_not_create_manifest(monkeypatch, tmp_path):
     videos_dir = tmp_path / "videos"
     videos_dir.mkdir()
@@ -498,7 +540,7 @@ def test_prepare_raises_when_agent_does_not_create_manifest(monkeypatch, tmp_pat
     try:
         uploader.prepare(videos_dir_path=videos_dir)
     except RuntimeError as error:
-        assert "did not create the manifest file" in str(error)
+        assert "did not return manifest output" in str(error)
         assert "Codex CLI" in str(error)
     else:
         raise AssertionError("Expected prepare() to fail when the manifest is missing")

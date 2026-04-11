@@ -33,20 +33,17 @@ MANIFEST_CHUNK_SIZE = 5
 
 MANIFEST_PROMPT_TEMPLATE = string.Template(
     """
-Create the file upload_manifest.jsonl in the current working directory.
-
-Write exactly $num JSON lines, one per provided video path, using each path exactly once and preserving the provided order.
+Write exactly $num JSON lines to stdout, one per provided video path, using each path exactly once and preserving the provided order.
 
 Each line must use this schema:
 {"video_path":"<provided video path>","body":{"snippet":{"title":"...","description":"...","tags":["..."],"categoryId":"10","defaultLanguage":"en"},"status":{"privacyStatus":"private","publishAt":"<ISO datetime in PST/PDT>","containsSyntheticMedia":false,"selfDeclaredMadeForKids":false}}}
 
 Requirements:
+- Output JSONL only with no markdown fences or extra commentary.
 - Tags should be viral.
 - Video should be published $publish_schedule.
 - Last video was published at $last_uploaded_video_dt.
 - Don't use emoji in texts.
-- Do not modify any file other than upload_manifest.jsonl.
-
 Main video title: $main_video_title
 Main video description: $main_video_description
 Video paths:
@@ -273,15 +270,6 @@ def _create_manifest_with_codex_cli(
         last_uploaded_video_dt=last_uploaded_video_dt,
         video_paths=video_paths,
     )
-    previous_manifest_lines: list[str] = []
-    if append and manifest_path.exists():
-        with open(manifest_path, "r", encoding="utf-8") as file:
-            previous_manifest_lines = [line for line in file.read().splitlines() if line]
-        manifest_path.unlink()
-
-    elif manifest_path.exists():
-        manifest_path.unlink()
-
     result = subprocess.run(
         [
             "codex",
@@ -298,24 +286,23 @@ def _create_manifest_with_codex_cli(
         text=True,
     )
 
-    if not manifest_path.exists():
+    manifest_lines = _extract_manifest_lines(output=result.stdout)
+    if not manifest_lines:
         raise RuntimeError(
-            "Codex CLI did not create the manifest file. "
+            "Codex CLI did not return manifest output. "
             f"stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}"
         )
 
-    generated_manifest_items = _read_manifest(manifest_path=manifest_path)
+    generated_manifest_items = [
+        ManifestItem.model_validate_json(line) for line in manifest_lines
+    ]
     _validate_manifest(manifest_items=generated_manifest_items, video_paths=video_paths)
 
-    if append and previous_manifest_lines:
-        chunk_manifest_lines = manifest_path.read_text(encoding="utf-8").splitlines()
-        merged_manifest_lines = previous_manifest_lines + [
-            line for line in chunk_manifest_lines if line
-        ]
-        manifest_path.write_text(
-            "\n".join(merged_manifest_lines) + "\n",
-            encoding="utf-8",
-        )
+    _append_manifest_items(
+        manifest_path=manifest_path,
+        manifest_items=generated_manifest_items,
+        append=append,
+    )
 
     return generated_manifest_items
 
@@ -365,6 +352,45 @@ def _validate_manifest(
 
     for manifest_item in manifest_items:
         ManifestBody.model_validate(manifest_item.body)
+
+
+def _extract_manifest_lines(output: str) -> list[str]:
+    lines: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("```"):
+            return []
+        if not stripped.startswith("{") or not stripped.endswith("}"):
+            return []
+        lines.append(stripped)
+
+    return lines
+
+
+def _append_manifest_items(
+    manifest_path: pathlib.Path,
+    manifest_items: list[ManifestItem],
+    *,
+    append: bool,
+) -> None:
+    if not manifest_items:
+        return
+
+    serialized_manifest_lines = "\n".join(
+        manifest_item.model_dump_json() for manifest_item in manifest_items
+    )
+    if append and manifest_path.exists():
+        existing_content = manifest_path.read_text(encoding="utf-8")
+        newline = "" if existing_content.endswith("\n") or not existing_content else "\n"
+        manifest_path.write_text(
+            existing_content + newline + serialized_manifest_lines + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    manifest_path.write_text(serialized_manifest_lines + "\n", encoding="utf-8")
 
 
 def _build_manifest_prompt(
