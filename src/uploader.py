@@ -22,7 +22,7 @@ VIDEO_DESCRIPTION_PATH = utils.DIST_DIR / "video" / "description.txt"
 UPLOAD_MANIFEST_PATH = "upload_manifest.jsonl"
 
 PUBLISH_SCHEDULE = "3 times a day (at 10am, 6pm, 10pm)"
-CODEX_MODEL = "gpt-5.4"
+CODEX_MODEL = "gpt-5.6-terra"
 STEP_BAR_FORMAT = (
     "{desc:<10} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} steps [{elapsed}<{remaining}] {postfix}"
 )
